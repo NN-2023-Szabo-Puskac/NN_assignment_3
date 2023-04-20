@@ -18,7 +18,7 @@ SOURCE_DIR = "converted"
 OUTPUT_DIR = "augmented_2"
 MIN_ROTATION = 0
 MAX_ROTATION = 45
-LOG_FILE_NAME = "./data/image_label_pairs.csv"
+LOG_FILE_NAME = "./data/labels.csv"
 
 def get_angles():
     x, y, z = choice((-1, 1)), choice((-1, 1)), choice((-1, 1))

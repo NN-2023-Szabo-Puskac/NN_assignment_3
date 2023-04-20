@@ -1,0 +1,1 @@
+# Neural Netoworks at FIIT - Assignment 3 - MTG card recognition 

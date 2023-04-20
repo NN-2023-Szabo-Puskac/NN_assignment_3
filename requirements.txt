@@ -1,0 +1,4 @@
+numpy
+ipykernel
+torch
+torchvision

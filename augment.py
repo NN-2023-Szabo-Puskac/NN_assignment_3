@@ -15,10 +15,10 @@ BORDER_SIZE = 100
 IMG_SHAPE = None  # pngs with no background
 NO_OF_AUGS = 5
 SOURCE_DIR = "converted"
-OUTPUT_DIR = "augmented"
+OUTPUT_DIR = "augmented_2"
 MIN_ROTATION = 0
 MAX_ROTATION = 45
-
+LOG_FILE_NAME = "./data/image_label_pairs.csv"
 
 def get_angles():
     x, y, z = choice((-1, 1)), choice((-1, 1)), choice((-1, 1))
@@ -48,6 +48,7 @@ def save_image(aug_idx: int, path: str, image: Image):
             path[idx] = '.'.join(suffix)
     new_path = '/'.join(path)
     image.save(new_path)
+    return new_path
 
 
 def augmentation_logic(aug_idx, path):
@@ -62,13 +63,20 @@ def augmentation_logic(aug_idx, path):
     x = randint(0, background.size[0] - foreground.size[0])
     y = randint(0, background.size[1] - foreground.size[1])
     background.paste(foreground, (x, y), foreground)
-    return background
+    return background, x, y, size
     
 
-def augment_image(path):
+def augment_image(path, **kwargs):
+    log_name = kwargs.get("log_name")
+    log = open(log_name, 'a')
+
     for idx in range(NO_OF_AUGS):
-        aug_img = augmentation_logic(idx, path)
-        save_image(idx, path, aug_img)
+        aug_img, x, y, size = augmentation_logic(idx, path)
+        new_path = save_image(idx, path, aug_img)
+        if log:
+            log.write(f"{new_path},{x},{y},{size},{size}\n")
+    
+    log.close()
     print(path)
     
 
@@ -105,12 +113,16 @@ if __name__ == "__main__":
     if not os.path.isdir(f'./data/{OUTPUT_DIR}'):
         os.mkdir(f'./data/{OUTPUT_DIR}')
         
-        cards = set()
+        cards = []
         for card in os.listdir(f'./data/{SOURCE_DIR}/'):
-            cards.add(f'./data/{SOURCE_DIR}/{card}')
+            cards.append(f'./data/{SOURCE_DIR}/{card}')
+        
+        data_pairs = open(LOG_FILE_NAME, 'w')
+        data_pairs.write("imagename,x,y,w,h\n")
+        data_pairs.close()
 
         with ProcessPoolExecutor(max_workers=NUM_OF_CPU_CORES) as executor:
-            futures = [executor.submit(augment_image, image_path) for image_path in cards]
+            futures = [executor.submit(augment_image, image_path, log_name=LOG_FILE_NAME) for image_path in cards[:10]]
             wait(futures)
     else:
         print("AUGMENTATIONS ALREADY EXIST")

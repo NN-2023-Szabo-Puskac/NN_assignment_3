@@ -44,21 +44,19 @@ class MTGCardsDataset(Dataset):
         real_w = label[-2]
         real_h = label[-1]
 
-        label_cell_x = int(real_cx / self.scale_w)
+        label_cell_x = int(real_cx / self.scale_w)  # the cell in whice the box is centered
         label_cell_y = int(real_cy / self.scale_h)
         label_cx = (real_cx / self.scale_w) - label_cell_x  # offset from the 0,0 of the cell
         label_cy = (real_cy / self.scale_h) - label_cell_y
-        #print(f"label_cx: {label_cx}, label_cy:{label_cy}, {(real_cx / self.scale_w)}, {real_cy / self.scale_h}, {int(real_cx / self.scale_w)}, {int(real_cy / self.scale_h)} ")
-        label_w = real_w / self.scale_w  # width of the box in cells
-        label_h = real_h / self.scale_h  # height of the box in cells
+        label_w = real_w / self.scale_w  # width and height of the box in cells
+        label_h = real_h / self.scale_h
         return torch.Tensor([label_cell_x, label_cell_y, label_cx, label_cy, label_w, label_h])
     
-    def get_ground_truth_real_coords(self, label):
+    def get_ground_truth_real_coords(self, label):  # convets the box from (cx, cy, w, h) to (x1, y1, x2, y2) - TODO: maybe we can do this using torchvision.ops.box_convert  
         real_cx = label[-4]
         real_cy = label[-3]
         real_w = label[-2]
         real_h = label[-1]
-
         real_x1 = real_cx - (real_w / 2)
         real_y1 = real_cy - (real_h / 2)
         real_x2 = real_cx + (real_w / 2)
@@ -92,8 +90,6 @@ class MTGCardsDataset(Dataset):
         #                max_iou_coords = (i, j, k)  # TODO: this needs a rework if we want to add more boxes per image
         #            #iou_matrix[i, j, k] = iou
 
-        #print(f"GROUND TRUTH OBJ: {gt_object}")
-        #print(f"real coords: {gt_real_coords}")
         cell_x_idx = int(gt_object[0])
         cell_y_idx = int(gt_object[1])
         
@@ -112,10 +108,7 @@ class MTGCardsDataset(Dataset):
         tw = label[-2] / self.anchor_boxes[anchor_idx][0]
         th = label[-1] / self.anchor_boxes[anchor_idx][1]
         target[cell_x_idx, cell_y_idx, anchor_idx, 1:5] = torch.Tensor([tx, ty, tw, th])
-
         #print(f"RETURNED TARGET: {target[cell_x_idx, cell_y_idx, anchor_idx, :]}")
-        #print(f"gt_vals: {target[max_iou_coords[0], max_iou_coords[1], max_iou_coords[2], 1:5]}")
-        #print(f"gt vals: cell_x:{max_iou_coords[0]}, cell_y:{max_iou_coords[1]}, k:{max_iou_coords[2]}, center_x_offset:{tx}, center_y_offset:{ty}, tw:{tw}, th:{th}")
         return target
 
     def __len__(self):
@@ -139,6 +132,7 @@ class ImageTransformer:
     def get_transform_pipe(self, img_w, img_h):
         transform_pipe = transforms.Compose([
             transforms.Resize([img_w,img_h]),
+            transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225]),
             #transforms.ToPILImage(),
             #ransforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.1),
             transforms.ToTensor()
@@ -148,6 +142,7 @@ class ImageTransformer:
     def get_test_transform_pipe(self, img_w, img_h):
         transform_pipe = transforms.Compose([
             transforms.Resize([img_w,img_h]),
+            transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225]),
             transforms.ToTensor()
         ])
         return transform_pipe

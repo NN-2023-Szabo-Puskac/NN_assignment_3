@@ -13,6 +13,7 @@ CONFIG = {
         "img_h": 640,
         "num_anchors_per_cell": 3,
         "limit": 13,
+        "num_max_boxes": 5
     },
     "dataloader": {
         "batch_size": 32,

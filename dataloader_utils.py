@@ -67,8 +67,8 @@ class MTGCardsDataset(Dataset):
             real_cx / self.scale_w
         ) - label_cell_x  # offset from the 0,0 of the cell
         label_cy = (real_cy / self.scale_h) - label_cell_y
-        label_w = real_w / self.scale_w  # width and height of the box in cells
-        label_h = real_h / self.scale_h
+        label_w = math.log(real_w / self.scale_w)  # width and height of the box in cells
+        label_h = math.log(real_h / self.scale_h)
         return torch.Tensor(
             [label_cell_x, label_cell_y, label_cx, label_cy, label_w, label_h]
         )
@@ -98,22 +98,10 @@ class MTGCardsDataset(Dataset):
     def generate_feature_label(self, label):
         gt_object = self.get_ground_truth(label=label)
         gt_real_coords = self.get_ground_truth_real_coords(label=label)
+
         target = torch.zeros(
             (self.feature_map_w, self.feature_map_h, self.num_anchors_per_cell, 5)
         )  # create an empty ground truth
-
-        # iou_matrix = torch.zeros((self.feature_map_w, self.feature_map_h, self.num_anchors_per_cell))
-        # max_iou = 0
-        # max_iou_coords = [0, 0, 0]
-        # for i in range(self.feature_map_w):
-        #    for j in range(self.feature_map_h):
-        #        for k in range(self.num_anchors_per_cell):
-        #            anchor = self.get_anchor(self.anchor_boxes[k], (i + gt_object[0]), (j + gt_object[1])) # box shifted by the x, y center offset of ground truth
-        #            iou = box_iou(gt_real_coords.unsqueeze(0), anchor.unsqueeze(0))
-        #            if iou > max_iou:
-        #                max_iou = iou
-        #                max_iou_coords = (i, j, k)  # TODO: this needs a rework if we want to add more boxes per image
-        #            #iou_matrix[i, j, k] = iou
 
         cell_x_idx = int(gt_object[0])
         cell_y_idx = int(gt_object[1])
@@ -134,10 +122,10 @@ class MTGCardsDataset(Dataset):
         target[cell_x_idx, cell_y_idx, anchor_idx, 0] = 1.0
         tx = gt_object[2]
         ty = gt_object[3]
-        tw = label[-2] / self.anchor_boxes[anchor_idx][0]
-        th = label[-1] / self.anchor_boxes[anchor_idx][1]
+        tw = math.log(label[-2] / self.anchor_boxes[anchor_idx][0])
+        th = math.log(label[-1] / self.anchor_boxes[anchor_idx][1])
         target[cell_x_idx, cell_y_idx, anchor_idx, 1:5] = torch.Tensor([tx, ty, tw, th])
-        # print(f"RETURNED TARGET: {target[cell_x_idx, cell_y_idx, anchor_idx, :]}")
+        print(f"RETURNED TARGET: {target[cell_x_idx, cell_y_idx, anchor_idx, :]}")
         return target
 
     def __len__(self):

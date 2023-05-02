@@ -24,7 +24,7 @@ class DetectionHead(nn.Module):
     
 
 class CardDetector(nn.Module):
-    def __init__(self, img_dims, anchor_boxes: torch.Tensor, num_anchors_per_cell: int, loss_fn, num_max_boxes: int = 1):
+    def __init__(self, img_dims, anchor_boxes: torch.Tensor, num_anchors_per_cell: int, num_max_boxes: int = 1):
         super(CardDetector, self).__init__()
 
         self.img_w = img_dims[0]
@@ -32,8 +32,6 @@ class CardDetector(nn.Module):
         self.anchor_boxes = anchor_boxes
         self.num_anchors_per_cell = num_anchors_per_cell
         self.num_max_boxes = num_max_boxes
-
-        self.loss_fn = loss_fn
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -83,6 +81,7 @@ class CardDetector(nn.Module):
         anchor_box_scales = self.create_anchor_box_scales(detection_shape=detection.shape)   #.to(self.device)
         anchor_box_offsets = self.create_anchor_box_offsets(detection_shape=detection.shape, scale_w=self.scale_w, scale_h=self.scale_h) #.to(self.device)
 
+        detection[:,:,:,:,3:5] = torch.exp(detection[:,:,:,:,3:5])
         detection[:,:,:,:,3:5] = torch.mul(detection[:,:,:,:,3:5], anchor_box_scales[:,:,:,:,3:5]) # multiply the w, h coords of detection with predifined anchor box w, h
         detection[:,:,:,:,1] = torch.mul(detection[:,:,:,:,1], self.scale_w)   # scale the x offset from cell orgin
         detection[:,:,:,:,2] = torch.mul(detection[:,:,:,:,2], self.scale_h)   # scale the y offset from cell origin
@@ -109,10 +108,8 @@ class CardDetector(nn.Module):
             objectness_scores = image[:, :1].squeeze(dim=1) # select the objectness score values, the squeeze to get rid of the extra dimension
 
             indices_to_keep = nms(boxes=boxes, scores=objectness_scores, iou_threshold=0.5)
-            kept_boxes = boxes[indices_to_keep[:self.num_max_boxes]]
-            #kept_obj_scores = objectness_scores[indices_to_keep[:self.num_max_boxes]]
-            
-            final_boxes[idx, :, :] = kept_boxes
+
+            final_boxes[idx, :, :] = boxes[indices_to_keep[:self.num_max_boxes]]
 
         return final_boxes
         
@@ -135,7 +132,6 @@ class CardDetector(nn.Module):
 
 from tqdm.auto import tqdm  # We use tqdm to display a simple progress bar, allowing us to observe the learning progression.
 from torchmetrics.detection import mean_ap
-
 
 def fit(
   model: nn.Module,
@@ -208,11 +204,11 @@ def fit(
                 val_loss += loss.item()
 
                 #TODO: calculate accuracy
-#
+
         ## Get the average Val Loss and Accuracy
         avg_val_loss = val_loss / len(val_dataloader)
         avg_val_acc = val_acc / len(val_dataloader)
-#
+
         print(f"Train loss: {avg_train_loss} | Val Loss: {avg_val_loss} | Val Accuracy: {avg_val_acc}")
         if WANDB_LOGGING:
             wandb.log({"Train Loss": avg_train_loss,"Val Loss": avg_val_loss, "Val Accuracy": avg_val_acc})

@@ -84,7 +84,7 @@ class MTGCardsDataset(Dataset):
         real_y1 = real_cy - (real_h / 2)
         real_x2 = real_cx + (real_w / 2)
         real_y2 = real_cy + (real_h / 2)
-        return torch.Tensor([real_x1, real_y1, real_x2, real_y2])
+        return torch.Tensor([[real_x1, real_y1, real_x2, real_y2]])
 
     def get_anchor(self, anchor, pos_x, pos_y):
         anchor_cx = pos_x * self.scale_w
@@ -93,46 +93,66 @@ class MTGCardsDataset(Dataset):
         anchor_y1 = anchor_cy - (anchor[1] / 2)
         anchor_x2 = anchor_cx + (anchor[0] / 2)
         anchor_y2 = anchor_cy + (anchor[1] / 2)
-        return torch.Tensor([anchor_x1, anchor_y1, anchor_x2, anchor_y2])
+        return torch.Tensor([[anchor_x1, anchor_y1, anchor_x2, anchor_y2]])
 
     def generate_feature_label(self, label):
         
         box_labels = []
-        for i in range(0, len(label), 4):
+        for i in range(0, (self.num_max_boxes * 4), 4):
             if not np.all(label[i:i+4] == 0):
                 box_labels.append(label[i:i+4])
-        label = box_labels[0]
 
-        gt_object = self.get_ground_truth(label=label)
-        gt_real_coords = self.get_ground_truth_real_coords(label=label)
+        gt_objects = []
+        gt_real_coords = []
+        for box_label in box_labels:
+            gt_object = self.get_ground_truth(label=box_label)
+            gt_real_coord = self.get_ground_truth_real_coords(label=box_label)
+            gt_objects.append(gt_object)
+            gt_real_coords.append(gt_real_coord)
 
         target = torch.zeros(
             (self.feature_map_w, self.feature_map_h, self.num_anchors_per_cell, 5)
         )  # create an empty ground truth
 
-        cell_x_idx = int(gt_object[0])
-        cell_y_idx = int(gt_object[1])
+        target_objects = []
+        for gt_obj_idx in range(len(gt_objects)):
 
-        max_iou = 0
-        anchor_idx = 0
-        for i in range(len(self.anchor_boxes)):
-            anchor = self.get_anchor(
-                self.anchor_boxes[i],
-                (gt_object[0] + gt_object[2]),
-                (gt_object[1] + gt_object[3]),
-            )  # box shifted by the x, y center offset of ground truth
-            iou = box_iou(gt_real_coords.unsqueeze(0), anchor.unsqueeze(0))
-            if iou > max_iou:
-                max_iou = iou
-                anchor_idx = i
+            cell_x_idx = int(gt_objects[gt_obj_idx][0])
+            cell_y_idx = int(gt_objects[gt_obj_idx][1])
+            x_offset = gt_objects[gt_obj_idx][2]
+            y_offset = gt_objects[gt_obj_idx][3]
+            w = gt_objects[gt_obj_idx][4]
+            h = gt_objects[gt_obj_idx][5]
 
-        target[cell_x_idx, cell_y_idx, anchor_idx, 0] = 1.0
-        tx = gt_object[2]
-        ty = gt_object[3]
-        tw = math.log(label[-2] / self.anchor_boxes[anchor_idx][0])
-        th = math.log(label[-1] / self.anchor_boxes[anchor_idx][1])
-        target[cell_x_idx, cell_y_idx, anchor_idx, 1:5] = torch.Tensor([tx, ty, tw, th])
-        #print(f"RETURNED TARGET: {target[cell_x_idx, cell_y_idx, anchor_idx, :]}")
+            max_iou = 0
+            target_anchor_idx = 0
+            for anchor_idx in range(len(self.anchor_boxes)):
+                anchor = self.get_anchor(
+                    self.anchor_boxes[anchor_idx],
+                    (cell_x_idx + x_offset),
+                    (cell_y_idx + y_offset),
+                ) 
+                iou = box_iou(gt_real_coords[gt_obj_idx], anchor)
+                if iou > max_iou:
+                    max_iou = iou
+                    target_anchor_idx = anchor_idx
+
+            tx = x_offset
+            ty = y_offset
+            tw = math.log(box_labels[gt_obj_idx][-2] / self.anchor_boxes[target_anchor_idx][0])
+            th = math.log(box_labels[gt_obj_idx][-1] / self.anchor_boxes[target_anchor_idx][1])
+            target_objects.append([cell_x_idx, cell_y_idx, target_anchor_idx, tx, ty, tw, th])
+
+        for target_object in target_objects:
+            #      cell_x_index      cell_y_index      target_anchor_idx
+            target[target_object[0], target_object[1], target_object[2], 0] = 1.0
+            target[target_object[0], target_object[1], target_object[2], 1:5] = torch.Tensor([
+                target_object[3],   # tx
+                target_object[4],   # ty
+                target_object[5],   # tw
+                target_object[6],   # th
+            ])
+        #print(f"RETURNED TARGET: {[target[target_object[0], target_object[1], target_object[2], :] for target_object in target_objects]}")
         return target
 
     def __len__(self):

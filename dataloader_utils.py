@@ -101,7 +101,7 @@ class MTGCardsDataset(Dataset):
         for i in range(0, len(label), 4):
             if not np.all(label[i:i+4] == 0):
                 box_labels.append(label[i:i+4])
-        label = box_labels
+        label = box_labels[0]
 
         gt_object = self.get_ground_truth(label=label)
         gt_real_coords = self.get_ground_truth_real_coords(label=label)
@@ -132,7 +132,7 @@ class MTGCardsDataset(Dataset):
         tw = math.log(label[-2] / self.anchor_boxes[anchor_idx][0])
         th = math.log(label[-1] / self.anchor_boxes[anchor_idx][1])
         target[cell_x_idx, cell_y_idx, anchor_idx, 1:5] = torch.Tensor([tx, ty, tw, th])
-        print(f"RETURNED TARGET: {target[cell_x_idx, cell_y_idx, anchor_idx, :]}")
+        #print(f"RETURNED TARGET: {target[cell_x_idx, cell_y_idx, anchor_idx, :]}")
         return target
 
     def __len__(self):

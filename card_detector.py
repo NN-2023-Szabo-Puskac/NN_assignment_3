@@ -69,13 +69,16 @@ class CardDetector(nn.Module):
         
         return detection
 
-    def predict(self, input):
+    def predict(self, input, ground_truth=None):
         self.eval()
 
         if (len(input.shape) == 3): # If we get a single image with shape (C x W x H) we need to add a dimension at the beginning so that the forward function can process it (only works on batched input)
             input = input.unsqueeze(0) 
 
         detection = self.forward(input)
+
+        if ground_truth != None:
+            detection = ground_truth
 
         anchor_box_scales = self.create_anchor_box_scales(detection_shape=detection.shape)   #.to(self.device)
         anchor_box_offsets = self.create_anchor_box_offsets(detection_shape=detection.shape, scale_w=self.scale_w, scale_h=self.scale_h) #.to(self.device)

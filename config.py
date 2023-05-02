@@ -11,9 +11,6 @@ CONFIG = {
         "img_w": 640,
         "img_h": 640,
         "num_anchors_per_cell": 3,
-        "anchor_box_sizes": [8192],
-        "anchor_box_aspect_ratios": [0.75, 1, 1.25],
-
     },
     "dataloader": {
         "batch_size": 32,

@@ -125,15 +125,12 @@ class MTGCardsDataset(Dataset):
             label = self.target_transform(label)
         return image, label
     
-class ImageTransformer:
-    def __init__(self):
-        pass
 
-    def get_transform_pipe(self, img_w, img_h):
-        transform_pipe = transforms.Compose([
-            transforms.Resize([img_w,img_h]),
-            transforms.ToPILImage(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225]),
-        ])
-        return transform_pipe
+def get_transform_pipe(img_w, img_h):
+    transform_pipe = transforms.Compose([
+        transforms.Resize([img_w,img_h]),
+        transforms.ToPILImage(),
+        transforms.ToTensor(),
+        transforms.Normalize(mean = [0.485, 0.456, 0.406], std = [0.229, 0.224, 0.225]),
+    ])
+    return transform_pipe

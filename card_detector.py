@@ -23,8 +23,34 @@ class DetectionHead(nn.Module):
         return self.conv(input)
     
 
+class DetectionHeadV2(nn.Module):
+    def __init__(self, in_channels: int, num_anchors_per_cell: int):
+        super().__init__()
+        
+        out_channels = num_anchors_per_cell * 5
+        self.conv1 = nn.Conv2d(in_channels, 512, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(512)
+        self.relu1 = nn.LeakyReLU(negative_slope=0.4)
+
+        self.conv2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(512)
+        self.relu2 = nn.ReLU(inplace=True)
+
+        self.conv3 = nn.Conv2d(512, out_channels, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu1(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu2(x)
+        x = self.conv3(x)
+        return x
+    
+
 class CardDetector(nn.Module):
-    def __init__(self, img_dims, anchor_boxes: torch.Tensor, num_anchors_per_cell: int, loss_fn, num_max_boxes: int = 1):
+    def __init__(self, img_dims, anchor_boxes: torch.Tensor, num_anchors_per_cell: int, num_max_boxes: int = 1):
         super(CardDetector, self).__init__()
 
         self.img_w = img_dims[0]
@@ -33,17 +59,15 @@ class CardDetector(nn.Module):
         self.num_anchors_per_cell = num_anchors_per_cell
         self.num_max_boxes = num_max_boxes
 
-        self.loss_fn = loss_fn
-
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        self.feature_extractor = models.resnet18(pretrained=True)
+        self.feature_extractor = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
         self.feature_extractor = nn.Sequential(*list(self.feature_extractor.children())[:-2])
         if FREEZE_FEATURE_EXTRACTOR:
             for param in self.feature_extractor.parameters():
                 param.requires_grad = False
         
-        self.detection_head = DetectionHead(in_channels=512, num_anchors_per_cell=self.num_anchors_per_cell)
+        self.detection_head = DetectionHeadV2(in_channels=512, num_anchors_per_cell=self.num_anchors_per_cell)
 
         dummy_image = torch.randn(1, 3, self.img_w, self.img_h)
         features_shape = self.feature_extractor(dummy_image).shape
@@ -60,16 +84,10 @@ class CardDetector(nn.Module):
         detection = self.detection_head(features)
         detection = detection.permute(0,2,3,1).contiguous()
         detection = detection.view(detection.shape[0], detection.shape[1], detection.shape[2], self.num_anchors_per_cell, 5)
-
-        # Apply sigmoid to the first 3 elements of the (p, cx, cy, w, h) tensor
-        #detection[:, :, :, :, :3] = torch.sigmoid(detection[:, :, :, :, :3])  
-
-        # Square the last two numbers (scales of width and height)
-        #detection[:, :, :, :, 3:] = torch.square(detection[:, :, :, :, 3:])
         
         return detection
 
-    def predict(self, input):
+    def predict(self, input, ground_truth=None):
         self.eval()
 
         if (len(input.shape) == 3): # If we get a single image with shape (C x W x H) we need to add a dimension at the beginning so that the forward function can process it (only works on batched input)
@@ -77,9 +95,13 @@ class CardDetector(nn.Module):
 
         detection = self.forward(input)
 
+        if ground_truth != None:
+            detection = ground_truth
+
         anchor_box_scales = self.create_anchor_box_scales(detection_shape=detection.shape)   #.to(self.device)
         anchor_box_offsets = self.create_anchor_box_offsets(detection_shape=detection.shape, scale_w=self.scale_w, scale_h=self.scale_h) #.to(self.device)
 
+        detection[:,:,:,:,3:5] = torch.exp(detection[:,:,:,:,3:5])
         detection[:,:,:,:,3:5] = torch.mul(detection[:,:,:,:,3:5], anchor_box_scales[:,:,:,:,3:5]) # multiply the w, h coords of detection with predifined anchor box w, h
         detection[:,:,:,:,1] = torch.mul(detection[:,:,:,:,1], self.scale_w)   # scale the x offset from cell orgin
         detection[:,:,:,:,2] = torch.mul(detection[:,:,:,:,2], self.scale_h)   # scale the y offset from cell origin
@@ -106,10 +128,8 @@ class CardDetector(nn.Module):
             objectness_scores = image[:, :1].squeeze(dim=1) # select the objectness score values, the squeeze to get rid of the extra dimension
 
             indices_to_keep = nms(boxes=boxes, scores=objectness_scores, iou_threshold=0.5)
-            kept_boxes = boxes[indices_to_keep[:self.num_max_boxes]]
-            #kept_obj_scores = objectness_scores[indices_to_keep[:self.num_max_boxes]]
-            
-            final_boxes[idx, :, :] = kept_boxes
+
+            final_boxes[idx, :, :] = boxes[indices_to_keep[:self.num_max_boxes]]
 
         return final_boxes
         
@@ -132,7 +152,6 @@ class CardDetector(nn.Module):
 
 from tqdm.auto import tqdm  # We use tqdm to display a simple progress bar, allowing us to observe the learning progression.
 from torchmetrics.detection import mean_ap
-
 
 def fit(
   model: nn.Module,
@@ -205,11 +224,30 @@ def fit(
                 val_loss += loss.item()
 
                 #TODO: calculate accuracy
-#
+
         ## Get the average Val Loss and Accuracy
         avg_val_loss = val_loss / len(val_dataloader)
         avg_val_acc = val_acc / len(val_dataloader)
-#
+
         print(f"Train loss: {avg_train_loss} | Val Loss: {avg_val_loss} | Val Accuracy: {avg_val_acc}")
         if WANDB_LOGGING:
             wandb.log({"Train Loss": avg_train_loss,"Val Loss": avg_val_loss, "Val Accuracy": avg_val_acc})
+
+
+if __name__ == "__main__":
+
+    anchor_boxes = torch.Tensor([[198.27963804, 206.74086672],
+       [129.59395666, 161.90171490],
+       [161.65437828, 232.34624509]
+    ])
+    detector = CardDetector(img_dims=(640, 640), anchor_boxes=anchor_boxes, num_anchors_per_cell=3)
+    dhv2 = DetectionHeadV2(512, num_anchors_per_cell=3)
+
+
+    dummy_img = torch.randn(1,3,640,640)
+    features = detector.feature_extractor(dummy_img)
+
+    detection1 = detector.detection_head(features)
+    detection2 = dhv2(features)
+    print(detection1.shape)
+    print(detection2.shape)

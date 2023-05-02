@@ -48,7 +48,7 @@ class MTGCardsDataset(Dataset):
         target_labels = []
         for idx in range(self.limit):
             label = np.array(
-                self.img_labels.iloc[idx, [1, 2, 3, 4]].values, dtype=float
+                self.img_labels.iloc[idx, 1:].values, dtype=float
             )
             target_labels.append(self.generate_feature_label(label=label))
         return target_labels
@@ -96,6 +96,13 @@ class MTGCardsDataset(Dataset):
         return torch.Tensor([anchor_x1, anchor_y1, anchor_x2, anchor_y2])
 
     def generate_feature_label(self, label):
+        
+        box_labels = []
+        for i in range(0, len(label), 4):
+            if not np.all(label[i:i+4] == 0):
+                box_labels.append(label[i:i+4])
+        label = box_labels
+
         gt_object = self.get_ground_truth(label=label)
         gt_real_coords = self.get_ground_truth_real_coords(label=label)
 

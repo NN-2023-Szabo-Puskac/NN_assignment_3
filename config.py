@@ -1,5 +1,5 @@
 WANDB_LOGGING = False
-FREEZE_FEATURE_EXTRACTOR = False
+FREEZE_FEATURE_EXTRACTOR = True
 CONFIG = {
     "project_name": "card detector",
     "optimizer": {

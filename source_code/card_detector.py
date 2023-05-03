@@ -116,6 +116,8 @@ class CardDetector(nn.Module):
     ):
         self.eval()
         input = input.to(device=self.device)
+        if ground_truth is not None:
+            ground_truth = ground_truth.to(self.device)
 
         with torch.no_grad():
             if (

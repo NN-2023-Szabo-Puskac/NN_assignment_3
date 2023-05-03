@@ -188,7 +188,7 @@ def fit(
     
     # Iterate through epochs with tqdm
     for epoch in tqdm(range(num_epochs)):
-        print(f"Epoch: {epoch}\n")
+        print(f"\nEpoch: {epoch}")
         train_total_loss = 0
         train_objectness_loss = 0
         train_localization_loss = 0 
@@ -231,7 +231,9 @@ def fit(
 
         # Validation
         # Setup the Val Loss and Accuracy to accumulate over the batches in the val dataset
-        val_loss = 0
+        val_total_loss = 0
+        val_objectness_loss = 0
+        val_localization_loss = 0
         val_acc = 0
         ## Set model to evaluation mode and use torch.inference_mode to remove unnecessary training operations 
         model.eval()
@@ -244,17 +246,29 @@ def fit(
                 obj_loss_value = obj_loss(pred_obj, true_obj)
                 # total loss
                 loss = box_loss_value + obj_loss_value
-                val_loss += loss.item()
-
+                val_total_loss += loss.item()
+                val_objectness_loss += obj_loss_value.item()
+                val_localization_loss += box_loss_value.item()
                 #TODO: calculate accuracy
 
+
         ## Get the average Val Loss and Accuracy
-        avg_val_loss = val_loss / len(val_dataloader)
+        avg_val_total_loss = val_total_loss / len(val_dataloader)
+        avg_val_objectness_loss = val_objectness_loss / len(val_dataloader)
+        avg_val_localization_loss = val_localization_loss / len(val_dataloader)
         avg_val_acc = val_acc / len(val_dataloader)
 
-        print(f"Train Total Loss: {avg_train_total_loss}\nTrain Objectness Loss: {avg_train_objectness_loss}\nTrain Localization Loss: {avg_train_localization_loss}\nVal Loss: {avg_val_loss}\nVal Accuracy: {avg_val_acc}")
+        print(f"Train Total Loss: {avg_train_total_loss}\nTrain Objectness Loss: {avg_train_objectness_loss}\nTrain Localization Loss: {avg_train_localization_loss}\nVal Total Loss: {avg_val_total_loss}\nVal Objectness Loss: {avg_val_objectness_loss}\nVal Localization Loss: {avg_val_localization_loss}\nVal Accuracy: {avg_val_acc}")
         if WANDB_LOGGING:
-            wandb.log({"Train Total Loss": avg_train_total_loss, "Train Objectness Loss": avg_train_objectness_loss, "Train Localization Loss": avg_train_localization_loss, "Val Loss": avg_val_loss, "Val Accuracy": avg_val_acc})
+            wandb.log({
+                "Train Total Loss": avg_train_total_loss,
+                "Train Objectness Loss": avg_train_objectness_loss,
+                "Train Localization Loss": avg_train_localization_loss,
+                "Val Total Loss": avg_val_total_loss,
+                "Val Objectness Loss": avg_val_objectness_loss,
+                "Val Localization Loss": avg_val_localization_loss,
+                "Val Accuracy": avg_val_acc
+            })
 
 
 if __name__ == "__main__":

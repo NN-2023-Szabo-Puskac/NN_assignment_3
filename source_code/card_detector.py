@@ -10,14 +10,16 @@ import wandb
 
 from torch.utils.data import DataLoader
 
-from source_code.config import FREEZE_FEATURE_EXTRACTOR, WANDB_LOGGING
+from config import FREEZE_FEATURE_EXTRACTOR, WANDB_LOGGING
+
+FEATURES_IN_ANCHOR = 5
 
 
 class DetectionHead(nn.Module):
     def __init__(self, in_channels: int, num_anchors_per_cell: int):
         super().__init__()
         
-        out_channels = num_anchors_per_cell * 5
+        out_channels = num_anchors_per_cell * FEATURES_IN_ANCHOR
         self.conv = nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=1, stride=1)
     def forward(self, input: torch.Tensor) -> torch.Tensor:
         return self.conv(input)
@@ -27,7 +29,7 @@ class DetectionHeadV2(nn.Module):
     def __init__(self, in_channels: int, num_anchors_per_cell: int):
         super().__init__()
         
-        out_channels = num_anchors_per_cell * 5
+        out_channels = num_anchors_per_cell * FEATURES_IN_ANCHOR
         self.conv1 = nn.Conv2d(in_channels, 512, kernel_size=3, stride=1, padding=1)
         self.bn1 = nn.BatchNorm2d(512)
         self.relu1 = nn.LeakyReLU(negative_slope=0.4)
@@ -83,7 +85,7 @@ class CardDetector(nn.Module):
         # Get detection vectors for each feature
         detection = self.detection_head(features)
         detection = detection.permute(0,2,3,1).contiguous()
-        detection = detection.view(detection.shape[0], detection.shape[1], detection.shape[2], self.num_anchors_per_cell, 5)
+        detection = detection.view(detection.shape[0], detection.shape[1], detection.shape[2], self.num_anchors_per_cell, FEATURES_IN_ANCHOR)
         #detection[:,:,:,:,0] = torch.sigmoid(detection[:,:,:,:,0])
         
         return detection
@@ -99,13 +101,11 @@ class CardDetector(nn.Module):
         else:
             detection = self.forward(input)
 
-        
-
         anchor_box_scales = self.create_anchor_box_scales(detection_shape=detection.shape)   #.to(self.device)
         anchor_box_offsets = self.create_anchor_box_offsets(detection_shape=detection.shape, scale_w=self.scale_w, scale_h=self.scale_h) #.to(self.device)
 
-        detection[:,:,:,:,3:5] = torch.exp(detection[:,:,:,:,3:5])
-        detection[:,:,:,:,3:5] = torch.mul(detection[:,:,:,:,3:5], anchor_box_scales[:,:,:,:,3:5]) # multiply the w, h coords of detection with predifined anchor box w, h
+        detection[:,:,:,:,3:FEATURES_IN_ANCHOR] = torch.exp(detection[:,:,:,:,3:FEATURES_IN_ANCHOR])
+        detection[:,:,:,:,3:FEATURES_IN_ANCHOR] = torch.mul(detection[:,:,:,:,3:FEATURES_IN_ANCHOR], anchor_box_scales[:,:,:,:,3:FEATURES_IN_ANCHOR]) # multiply the w, h coords of detection with predifined anchor box w, h
         detection[:,:,:,:,1] = torch.mul(detection[:,:,:,:,1], self.scale_w)   # scale the x offset from cell orgin
         detection[:,:,:,:,2] = torch.mul(detection[:,:,:,:,2], self.scale_h)   # scale the y offset from cell origin
         detection[:,:,:,:,1:3] = torch.add(detection[:,:,:,:,1:3], anchor_box_offsets[:,:,:,:,1:3])   # add offset from image origin
@@ -113,17 +113,16 @@ class CardDetector(nn.Module):
         # Apply sigmoid to the objectness scores
         detection[:,:,:,:,0] = torch.sigmoid(detection[:,:,:,:,0])
 
-        wh_offsets = detection[:, :, :, :, 3:5].clone()
+        wh_offsets = detection[:, :, :, :, 3:FEATURES_IN_ANCHOR].clone()
         wh_offsets = torch.mul(wh_offsets, 0.5)
 
         cx_cy = detection[:, :, :, :, 1:3].clone()
 
         pred_boxes = detection.clone()
         pred_boxes[:, :, :, :, 1:3] = torch.add(cx_cy, -1 * wh_offsets)
-        pred_boxes[:, :, :, :, 3:5] = torch.add(cx_cy, wh_offsets)
+        pred_boxes[:, :, :, :, 3:FEATURES_IN_ANCHOR] = torch.add(cx_cy, wh_offsets)
         
-        pred_boxes = pred_boxes.view(-1, pred_boxes.shape[1] * pred_boxes.shape[2] * self.num_anchors_per_cell, 5)
-
+        pred_boxes = pred_boxes.view(-1, pred_boxes.shape[1] * pred_boxes.shape[2] * self.num_anchors_per_cell, FEATURES_IN_ANCHOR)
 
         final_boxes = torch.Tensor(input.shape[0], num_max_boxes, 4)
         for idx, image in enumerate(pred_boxes):
@@ -179,7 +178,7 @@ def fit(
   train_dataloader: DataLoader,
   val_dataloader: DataLoader,
   device: str,
-  print_rate: int = 10
+  print_rate: int = 100
   ):
     # TODO: figure out accuacy
     #accuracy = torchmetrics.Accuracy(task='multiclass', average="weighted").to(model.device)
@@ -207,7 +206,7 @@ def fit(
             true_boxes = y[..., 1:]
             true_obj = y[..., 0]
             
-             # localization loss
+            # localization loss
             box_loss_value = box_loss(pred_boxes, true_boxes)
             
             # objectness loss

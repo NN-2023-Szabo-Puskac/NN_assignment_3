@@ -47,36 +47,30 @@ class MTGCardsDataset(Dataset):
     def generate_target_labels(self):
         target_labels = []
         for idx in range(self.limit):
-            label = np.array(
-                self.img_labels.iloc[idx, 1:].values, dtype=float
-            )
+            label = np.array(self.img_labels.iloc[idx, 1:].values, dtype=float)
             target_labels.append(self.generate_feature_label(label=label))
         return target_labels
-    
+
     def get_ground_truth(self, label):
         real_cx = label[-4]
         real_cy = label[-3]
         real_w = label[-2]
         real_h = label[-1]
 
-        label_cell_x = int(
-            real_cx / self.scale_w
-        )  
+        label_cell_x = int(real_cx / self.scale_w)
         label_cell_y = int(real_cy / self.scale_h)
-        label_cx = (
-            real_cx / self.scale_w
-        ) - label_cell_x  
+        label_cx = (real_cx / self.scale_w) - label_cell_x
         label_cy = (real_cy / self.scale_h) - label_cell_y
         label_w = real_w / self.scale_w
         label_h = real_h / self.scale_h
 
         return {
-            "cell_x": label_cell_x, # the cell in whice the box is centered
+            "cell_x": label_cell_x,  # the cell in whice the box is centered
             "cell_y": label_cell_y,
-            "cx": label_cx, # offset from the 0,0 of the cell
+            "cx": label_cx,  # offset from the 0,0 of the cell
             "cy": label_cy,
-            "w": label_w,   # width of the box in cells
-            "h": label_h,   # height of the box in cells
+            "w": label_w,  # width of the box in cells
+            "h": label_h,  # height of the box in cells
         }
 
     def generate_feature_label(self, label):
@@ -88,14 +82,23 @@ class MTGCardsDataset(Dataset):
         max_iou = 0
         target_anchor_idx = 0
         for anchor_idx in range(len(self.anchor_boxes)):
-            anchor_cxcywh = torch.Tensor([box_label[0], box_label[1], self.anchor_boxes[anchor_idx][0], self.anchor_boxes[anchor_idx][1]])
+            anchor_cxcywh = torch.Tensor(
+                [
+                    box_label[0],
+                    box_label[1],
+                    self.anchor_boxes[anchor_idx][0],
+                    self.anchor_boxes[anchor_idx][1],
+                ]
+            )
             anchor_xyxy = box_convert(anchor_cxcywh, in_fmt="cxcywh", out_fmt="xyxy")
             iou = box_iou(gt_xyxy.unsqueeze(0), anchor_xyxy.unsqueeze(0))
             if iou > max_iou:
                 max_iou = iou
                 target_anchor_idx = anchor_idx
 
-        target = torch.zeros((self.feature_map_w, self.feature_map_h, self.num_anchors_per_cell, 5))  # create an empty ground truth
+        target = torch.zeros(
+            (self.feature_map_w, self.feature_map_h, self.num_anchors_per_cell, 5)
+        )  # create an empty ground truth
         cell_x_min = int(gt_cell["cell_x"] + gt_cell["cx"] - (gt_cell["w"] / 2))
         cell_y_min = int(gt_cell["cell_y"] + gt_cell["cy"] - (gt_cell["h"] / 2))
         cell_x_max = int(gt_cell["cell_x"] + gt_cell["cx"] + (gt_cell["w"] / 2))
@@ -104,15 +107,17 @@ class MTGCardsDataset(Dataset):
         tw = math.log(box_label[-2] / self.anchor_boxes[target_anchor_idx][0])
         th = math.log(box_label[-1] / self.anchor_boxes[target_anchor_idx][1])
         for x in range(cell_x_min, cell_x_max + 1):
-            for y in range(cell_y_min, cell_y_max):
+            for y in range(cell_y_min, cell_y_max + 1):
                 offset_x = gt_cell["cell_x"] + gt_cell["cx"] - x
                 offset_y = gt_cell["cell_y"] + gt_cell["cy"] - y
 
-                target[x, y,target_anchor_idx, 0] = 1.0
-                target[x, y,target_anchor_idx, 1:] = torch.Tensor([offset_x, offset_y, tw, th])
+                target[x, y, target_anchor_idx, 0] = 0.8
+                target[x, y, target_anchor_idx, 1:] = torch.Tensor(
+                    [offset_x, offset_y, tw, th]
+                )
+        target[gt_cell["cell_x"], gt_cell["cell_y"], target_anchor_idx, 0] = 1.0
 
         return target
-
 
     def __len__(self):
         return self.limit
@@ -142,27 +147,30 @@ def get_transform_pipe(img_w, img_h):
 
 
 if __name__ == "__main__":
-    anchor_boxes = torch.Tensor([[198.27963804, 206.74086672],
-       [129.59395666, 161.90171490],
-       [161.65437828, 232.34624509]
-    ])
+    anchor_boxes = torch.Tensor(
+        [
+            [198.27963804, 206.74086672],
+            [129.59395666, 161.90171490],
+            [161.65437828, 232.34624509],
+        ]
+    )
     train_dataset = MTGCardsDataset(
         annotations_file="data/val_labels.csv",
         img_dir="",
         anchor_boxes=anchor_boxes,
-        feature_map_dims=(20,20),
-        img_dims= (640, 640),
+        feature_map_dims=(20, 20),
+        img_dims=(640, 640),
         num_anchors_per_cell=3,
         num_max_boxes=1,
-        transform=get_transform_pipe(640,640),
-        limit=None
+        transform=get_transform_pipe(640, 640),
+        limit=None,
     )
     target = train_dataset.generate_feature_label([300, 300, 200, 50])
-    print(target[torch.where(target[:,:,:,0] == 1)])
-    print(torch.where(target[:,:,:,0] == 1))
+    print(target[torch.where(target[:, :, :, 0] == 1)])
+    print(torch.where(target[:, :, :, 0] == 1))
 
 
-#class MTGCardsDataset(Dataset):
+# class MTGCardsDataset(Dataset):
 #    def __init__(
 #        self,
 #        annotations_file,
@@ -224,7 +232,7 @@ if __name__ == "__main__":
 #        return torch.Tensor(
 #            [label_cell_x, label_cell_y, label_cx, label_cy, label_w, label_h]
 #        )
-#    
+#
 #
 #    def get_ground_truth_real_coords(
 #        self, label
@@ -250,7 +258,7 @@ if __name__ == "__main__":
 #
 #
 #    def generate_feature_label(self, label):
-#        
+#
 #        box_labels = []
 #        for i in range(0, (self.num_max_boxes * 4), 4):
 #            if not np.all(label[i:i+4] == 0):
@@ -285,7 +293,7 @@ if __name__ == "__main__":
 #                    self.anchor_boxes[anchor_idx],
 #                    (cell_x_idx + x_offset),
 #                    (cell_y_idx + y_offset),
-#                ) 
+#                )
 #                iou = box_iou(gt_real_coords[gt_obj_idx], anchor)
 #                if iou > max_iou:
 #                    max_iou = iou
@@ -308,7 +316,7 @@ if __name__ == "__main__":
 #            ])
 #        #print(f"RETURNED TARGET: {[target[target_object[0], target_object[1], target_object[2], :] for target_object in target_objects]}")
 #        return target
-#    
+#
 #    def get_ground_truthV2(self, label):
 #        real_cx = label[-4]
 #        real_cy = label[-3]
@@ -317,11 +325,11 @@ if __name__ == "__main__":
 #
 #        label_cell_x = int(
 #            real_cx / self.scale_w
-#        )  
+#        )
 #        label_cell_y = int(real_cy / self.scale_h)
 #        label_cx = (
 #            real_cx / self.scale_w
-#        ) - label_cell_x  
+#        ) - label_cell_x
 #        label_cy = (real_cy / self.scale_h) - label_cell_y
 #        label_w = real_w / self.scale_w
 #        label_h = real_h / self.scale_h

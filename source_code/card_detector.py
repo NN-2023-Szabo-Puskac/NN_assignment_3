@@ -267,7 +267,8 @@ def fit(
     train_dataloader: DataLoader,
     val_dataloader: DataLoader,
     device: str,
-    print_rate: int = 100,
+    print_rate: int = 10,
+    save_path: str = None,
 ):
     # TODO: figure out accuacy
     # accuracy = torchmetrics.Accuracy(task='multiclass', average="weighted").to(model.device)
@@ -309,13 +310,13 @@ def fit(
 
             loss.backward()
             optimizer.step()
-            if batch % print_rate == 0:
+            if batch + 1 % print_rate == 0:  # indexing batches from zero
                 print(
-                    f"Looked at {batch} Batches\t---\t{batch * len(X)}/{len(train_dataloader.dataset)} Samples"
+                    f"Looked at {batch+1} Batches\t---\t{batch * len(X)}/{len(train_dataloader.dataset)} Samples"
                 )
             elif batch == len(train_dataloader) - 1:
                 print(
-                    f"Looked at {batch} Batches\t---\t{len(train_dataloader.dataset)}/{len(train_dataloader.dataset)} Samples"
+                    f"Looked at {batch+1} Batches\t---\t{len(train_dataloader.dataset)}/{len(train_dataloader.dataset)} Samples"
                 )
 
         # Divide the train_loss by the number of batches to get the average train_loss
@@ -352,7 +353,13 @@ def fit(
         avg_val_acc = val_acc / len(val_dataloader)
 
         print(
-            f"Train Total Loss: {avg_train_total_loss}\nTrain Objectness Loss: {avg_train_objectness_loss}\nTrain Localization Loss: {avg_train_localization_loss}\nVal Total Loss: {avg_val_total_loss}\nVal Objectness Loss: {avg_val_objectness_loss}\nVal Localization Loss: {avg_val_localization_loss}\nVal Accuracy: {avg_val_acc}"
+            f"""Train Total Loss:    {avg_train_total_loss}
+Train Objectness Loss:   {avg_train_objectness_loss}
+Train Localization Loss: {avg_train_localization_loss}
+Val Total Loss:          {avg_val_total_loss}
+Val Objectness Loss:     {avg_val_objectness_loss}
+Val Localization Loss:   {avg_val_localization_loss}
+Val Accuracy:            {avg_val_acc}"""
         )
         if WANDB_LOGGING:
             wandb.log(
@@ -366,6 +373,8 @@ def fit(
                     "Val Accuracy": avg_val_acc,
                 }
             )
+    if save_path:
+        torch.save(model.state_dict(), save_path)
 
 
 if __name__ == "__main__":

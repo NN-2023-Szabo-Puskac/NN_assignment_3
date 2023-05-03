@@ -254,7 +254,7 @@ def fit(
 
         print(f"Train Total Loss: {avg_train_total_loss}\nTrain Objectness Loss: {avg_train_objectness_loss}\nTrain Localization Loss: {avg_train_localization_loss}\nVal Loss: {avg_val_loss}\nVal Accuracy: {avg_val_acc}")
         if WANDB_LOGGING:
-            wandb.log({"Train Loss": avg_train_total_loss,"Val Loss": avg_val_loss, "Val Accuracy": avg_val_acc})
+            wandb.log({"Train Total Loss": avg_train_total_loss, "Train Objectness Loss": avg_train_objectness_loss, "Train Localization Loss": avg_train_localization_loss, "Val Loss": avg_val_loss, "Val Accuracy": avg_val_acc})
 
 
 if __name__ == "__main__":

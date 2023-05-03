@@ -61,15 +61,23 @@ class ImageTransformer(object):
     """Perspective transformation class for image
     with shape (height, width, #channels)"""
 
-    def __init__(self, image_path, shape, border_size, crop: bool = False):
+    def __init__(
+        self,
+        image_path: str = None,
+        shape: tuple = None,
+        border_size: int = 0,
+        crop: bool = False,
+        image=None,
+    ):
         self.image_path = image_path
 
-        if crop:
+        if image is None:
             self.image = load_image(image_path, None)
-            self.resize_and_crop(shape)
         else:
-            self.image = load_image(image_path, shape)
-            # self.resize(shape)
+            self.image = image
+
+        if crop:
+            self.resize_and_crop(shape)
 
         self.copy = 255 * np.ones_like(self.image)
         self.copy = self.prepare_borders(self.copy, border_size)

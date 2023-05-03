@@ -1,30 +1,31 @@
 import os
 import glob
-import more_itertools
-import cv2
-import sys
 import torchvision.transforms as transforms
 import numpy as np
 from PIL import Image, ImageFilter
-from functools import wraps
 from random import choice, randrange, randint
 from concurrent.futures import ProcessPoolExecutor
-from concurrent.futures import wait
-from image_transformer import ImageTransformer
-from typing import List
+from concurrent.futures import wait, as_completed
+from image_transformer import ImageTransformer, load_image
 from datetime import datetime
+from time import sleep
 
-NUM_OF_CPU_CORES = 10  # includes logical
+
+NUM_OF_CPU_CORES = 12  # includes logical
 BORDER_SIZE = 100
 IMG_SHAPE = (222, 310)  # pngs with no background
-NO_OF_AUGS = 4
+NO_OF_AUGS = 5
 SOURCE_DIR = "converted"
-OUTPUT_DIR = "augmented_1"
+OUTPUT_DIR = "augmented_test"
 MIN_ROTATION = 0
 MAX_ROTATION = 45
-LOG_FILE_NAME = "./data/labels.csv"
+LOG_FILE_NAME = "./data/labels_test.csv"
 IMG_COUNTS = [1]
+CHUNK_SIZE = 5000
 # IMG_COUNTS = prep_image_counts()
+CARD_IMAGES = []
+BACKGROUNDS = []
+LOGS = []
 
 
 def prep_image_counts() -> list[int]:
@@ -56,16 +57,33 @@ def get_angles(
     return (theta * x, phi * y, gamma * z)
 
 
-def select_background() -> str:
-    images = glob.glob("./data/wallpapers/*.jpg") + glob.glob("./data/wallpapers/*.png")
-    return choice(images)
+def load_backgrounds(start_time: datetime = None) -> list:
+    print("LOADING BACKGROUNDS")
+
+    image_paths = glob.glob("./data/wallpapers/*.jpg") + glob.glob(
+        "./data/wallpapers/*.png"
+    )
+    images = []
+    for path in image_paths:
+        images.append(load_image(path))
+
+    if start_time is not None:
+        current = datetime.now()
+        print(f"Elapsed: {current-start_time}")
+    return images
+
+
+def select_background(backgrounds) -> str:
+    return choice(backgrounds)
 
 
 def get_random_size() -> int:
     return choice((144, 240, 360))
 
 
-def save_image(aug_idx: int, path: str, image: Image) -> str:
+def save_image(
+    aug_idx: int, path: str, image: Image, logs: list, positions: np.array
+) -> str:
     path = path.split("/")
     for idx, segment in enumerate(path):
         if segment == f"{SOURCE_DIR}":
@@ -73,24 +91,41 @@ def save_image(aug_idx: int, path: str, image: Image) -> str:
 
         if idx == len(path) - 1:
             suffix = segment.split(".")
-            suffix[0] = suffix[0] + "_" + str(aug_idx + 1)
+            suffix[0] = suffix[0] + "_" + str(aug_idx)
             path[idx] = ".".join(suffix)
     new_path = "/".join(path)
     image.save(new_path)
-    return new_path
+
+    return f"{new_path}{assemble_positions_string(positions)}\n"
 
 
-def prepare_foreground(path: str, size: int) -> tuple[object, object]:
-    it = ImageTransformer(path, IMG_SHAPE, BORDER_SIZE, crop=True)
+def save_images(list_of_params):
+    logs = []
+    for params in list_of_params:
+        logs.append(save_image(*params))
+    return logs
+
+
+def prepare_foreground(image, size: tuple = None) -> tuple[object, object]:
+    it = ImageTransformer(
+        image=image, shape=IMG_SHAPE, border_size=BORDER_SIZE, crop=True
+    )
     _, _, gamma = get_angles()
     rotated, copied, _ = it.rotate_along_axis(gamma=gamma)
     rotated_img = transforms.ToPILImage()(rotated)
     rotated_copy = transforms.ToPILImage()(copied)
-    return rotated_img.resize((size, size)), rotated_copy.resize((size, size))
+    if size is not None:
+        rotated_img = rotated_img.resize((size[0], size[1]))
+        rotated_copy = rotated_copy.resize((size[0], size[1]))
+    return rotated_img, rotated_copy
 
 
-def find_position(bg_copy: Image) -> np.array:
+def find_position(bg_copy: Image, treshold: int = 1) -> np.array:
     copy = np.array(bg_copy)
+    if treshold is not None:
+        copy[copy < treshold] = 0
+        copy[copy >= treshold] = 255
+
     offsetx = None
     for idx, row in enumerate(copy.transpose(1, 0, 2)):
         if 255 in row:
@@ -125,7 +160,9 @@ def find_positions(bg_copies: list[object]) -> np.array:
     return np.array(positions)
 
 
-def rotate_background(bg_transformer: ImageTransformer, background: Image, copies: list[object]) -> tuple[object, list]:
+def rotate_background(
+    bg_transformer: ImageTransformer, background: Image, copies: list[object]
+) -> tuple[object, list]:
     theta, phi, gamma = get_angles(max_theta=30, max_phi=30, max_gamma=15)
     bg_transformer.image = bg_transformer.prepare_borders(
         np.array(background), BORDER_SIZE
@@ -148,28 +185,33 @@ def rotate_background(bg_transformer: ImageTransformer, background: Image, copie
 
 
 def jitter_and_blur(image: Image) -> Image:
-    jitter = transforms.ColorJitter(brightness=0.1, contrast=1, saturation=0.1, hue=0.5)
-    to_jitter = transforms.ToPILImage()(np.array(image)[:,:,:3])
+    jitter = transforms.ColorJitter(
+        brightness=(0.9, 1.25), contrast=(0.85, 1.15), saturation=(0.9, 1.25), hue=0.3
+    )
+    to_jitter = transforms.ToPILImage()(np.array(image)[:, :, :3])
     jittered_image = np.array(jitter(to_jitter))
     image_array = np.array(image)
-    image_array[:,:,:3] = jittered_image
+    image_array[:, :, :3] = jittered_image
     jittered_image = transforms.ToPILImage()(image_array)
     blurred_image = jittered_image.filter(ImageFilter.GaussianBlur())
     return blurred_image
-    
 
-def augmentation_logic(path: str) -> tuple[object, np.array]:
+
+def augmentation_logic(image, backgrounds: list = None) -> tuple[object, np.array]:
     images_count = choice(IMG_COUNTS)
 
-    bg_path = select_background()
-    bg = ImageTransformer(bg_path, None, 0)
+    if backgrounds is None:
+        backgrounds = load_backgrounds()
+
+    bg_img = select_background(backgrounds)
+    bg = ImageTransformer(image=bg_img, shape=None, border_size=0)
     background = transforms.ToPILImage()(bg.image).convert("RGBA")
 
     bg_copies = []
     for _ in range(images_count):
-        size = 720  # get_random_size()
+        size = (516, 720)  # get_random_size()
 
-        foreground, copy = prepare_foreground(path, size)
+        foreground, copy = prepare_foreground(image, size)
         x = randint(0, background.size[0] - foreground.size[0])
         y = randint(0, background.size[1] - foreground.size[1])
         background.paste(foreground, (x, y), foreground)
@@ -181,6 +223,7 @@ def augmentation_logic(path: str) -> tuple[object, np.array]:
 
     rotated_bg, rotated_copies = rotate_background(bg, background, bg_copies)
     return jitter_and_blur(rotated_bg), find_positions(rotated_copies)
+    # return rotated_bg, find_positions(rotated_copies)
 
 
 def assemble_positions_string(positions: np.array) -> str:
@@ -193,17 +236,16 @@ def assemble_positions_string(positions: np.array) -> str:
     return out
 
 
-def augment_image(path: str, **kwargs) -> None:
-    log_name = kwargs.get("log_name")
-    log = open(log_name, "a")
+def augment_image(**kwargs) -> None:
+    path_image_tuple = kwargs.get("card")
+    logs = kwargs.get("logs")
+    backgrounds = kwargs.get("backgrounds")
 
+    outs = []
     for idx in range(NO_OF_AUGS):
-        aug_img, positions = augmentation_logic(path)
-        new_path = save_image(idx+1, path, aug_img)
-        if log:
-            log.write(f"{new_path}{assemble_positions_string(positions)}\n")
-
-    log.close()
+        aug_img, positions = augmentation_logic(path_image_tuple[1], backgrounds)
+        outs.append((idx + 1, path_image_tuple[0], aug_img, logs, positions))
+    return save_images(outs)
 
 
 def convert_jpg_to_png():
@@ -225,51 +267,82 @@ def convert_jpg_to_png():
         image.save(new_path)
 
 
-if __name__ == "__main__":
+def parallel_run(logs):
+    with ProcessPoolExecutor(max_workers=NUM_OF_CPU_CORES) as executor:
+        futures = [
+            executor.submit(
+                augment_image,
+                card=path_image_tuple,
+                logs=logs,
+                backgrounds=BACKGROUNDS,
+            )
+            for path_image_tuple in CARD_IMAGES
+        ]
+        [LOGS.extend(future.result()) for future in as_completed(futures)]
+
+
+def convert_source_images(start_time):
     if not os.path.exists("./data/converted/"):
         convert_jpg_to_png()
     else:
         print("CONVERTED IMAGES ALREADY EXIST")
+        current = datetime.now()
+        print(f"Elapsed: {current-start_time}")
 
+
+def get_paths_to_non_plane_cards(start_time):
     cards = []
     for card in os.listdir(f"./data/{SOURCE_DIR}/"):
         cards.append(f"./data/{SOURCE_DIR}/{card}")
 
     print("CHECKING CARD SHAPE")
     counter = 0
-    non_plain_cards = []
+    non_plane_cards = []
     for card in cards:
         size = Image.open(card).size
         if size[0] >= 400:
             counter += 1
             continue
-        non_plain_cards.append(card)
+        non_plane_cards.append(card)
     print(f"DROPPED {counter} CARDS WITH UNSUITABLE SHAPE")
+    current = datetime.now()
+    print(f"Elapsed: {current-start_time}")
+    return non_plane_cards
 
-    if not os.path.isdir(f"./data/{OUTPUT_DIR}"):
-        os.mkdir(f"./data/{OUTPUT_DIR}")
-        data_pairs = open(LOG_FILE_NAME, "w")
+
+def load_source_images(paths_to_images, start_time):
+    print(f"LOADING MAGIC CARDS DATASET")
+    for path in paths_to_images:
+        CARD_IMAGES.append((path, load_image(path)))
+    current = datetime.now()
+    print(f"DATASET LOADED | Elapsed: {current-start_time}")
+
+
+if __name__ == "__main__":
+    start = datetime.now()
+    convert_source_images(start_time=start)
+    non_plane_cards = get_paths_to_non_plane_cards(start_time=start)
+    non_plane_cards = non_plane_cards[:2000]
+
+    # if not os.path.isdir(f"./data/{OUTPUT_DIR}"):
+    os.makedirs(f"./data/{OUTPUT_DIR}", exist_ok=True)
+
+    BACKGROUNDS = load_backgrounds(start_time=start)
+    load_source_images(non_plane_cards, start)
+
+    print("AUGMENTING CARDS")
+    parallel_run(LOGS)
+
+    current = datetime.now()
+    print(f"AUGMENTATIONS DONE | Elapsed: {current-start}")
+
+    with open(LOG_FILE_NAME, "w") as data_pairs:
         data_pairs.write(
             "imagename,x1,y1,w1,h1,x2,y2,w2,h2,x3,y3,w3,h3,x4,y4,w4,h4,x5,y5,w5,h5\n"
         )
-        data_pairs.close()
-    index = 0
-    start = datetime.now()
-    with ProcessPoolExecutor(max_workers=NUM_OF_CPU_CORES) as executor:
-        futures = [
-            executor.submit(augment_image, image_path, log_name=LOG_FILE_NAME)
-            for image_path in non_plain_cards
-        ]
-        for future in futures:
-            future.result()
-            index += 1
-            if index % 100:
-                current = datetime.now()
-                print(
-                    f"PROGRESS {index}/{len(non_plain_cards)} | Elapsed: {current-start}"
-                )
-        # for card in non_plain_cards[:images_to_process]:
-        #     augment_image(card, log_name=LOG_FILE_NAME)
-    # lse:
-    #    print("AUGMENTATIONS ALREADY EXIST")    
+        for line in LOGS:
+            data_pairs.write(line)
+
+    # else:
+    #     print("AUGMENTATIONS ALREADY EXIST")
     print("DONE")

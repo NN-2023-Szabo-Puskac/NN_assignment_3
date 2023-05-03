@@ -4,7 +4,7 @@ CONFIG = {
     "project_name": "card detector",
     "optimizer": {
         "lr": 0.0001,
-        "num_epochs": 100,
+        "num_epochs": 10,
     },
     "dataset": {
         "img_dir": "",
@@ -15,10 +15,9 @@ CONFIG = {
         "img_h": 640,
         "num_anchors_per_cell": 3,
         "limit": None,
-        "num_max_boxes": 5
+        "num_max_boxes": 5,
     },
     "dataloader": {
-        "batch_size": 32,
+        "batch_size": 64,
     },
-
 }

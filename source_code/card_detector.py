@@ -10,7 +10,7 @@ import wandb
 
 from torch.utils.data import DataLoader
 
-from config import FREEZE_FEATURE_EXTRACTOR, WANDB_LOGGING
+from source_code.config import FREEZE_FEATURE_EXTRACTOR, WANDB_LOGGING
 
 
 class DetectionHead(nn.Module):
@@ -88,16 +88,18 @@ class CardDetector(nn.Module):
         
         return detection
 
-    def predict(self, input, keep_box_score_treshhold=0.6, ground_truth=None):
+    def predict(self, input, keep_box_score_treshhold=0.51, num_max_boxes=5, ground_truth=None):
         self.eval()
 
         if (len(input.shape) == 3): # If we get a single image with shape (C x W x H) we need to add a dimension at the beginning so that the forward function can process it (only works on batched input)
             input = input.unsqueeze(0) 
 
-        detection = self.forward(input)
-
         if ground_truth != None:
             detection = ground_truth
+        else:
+            detection = self.forward(input)
+
+        
 
         anchor_box_scales = self.create_anchor_box_scales(detection_shape=detection.shape)   #.to(self.device)
         anchor_box_offsets = self.create_anchor_box_offsets(detection_shape=detection.shape, scale_w=self.scale_w, scale_h=self.scale_h) #.to(self.device)
@@ -123,20 +125,20 @@ class CardDetector(nn.Module):
         pred_boxes = pred_boxes.view(-1, pred_boxes.shape[1] * pred_boxes.shape[2] * self.num_anchors_per_cell, 5)
 
 
-        final_boxes = torch.Tensor(input.shape[0], self.num_max_boxes, 4)
+        final_boxes = torch.Tensor(input.shape[0], num_max_boxes, 4)
         for idx, image in enumerate(pred_boxes):
             boxes =  image[:, 1:]  # select the coordinate values
             objectness_scores = image[:, :1].squeeze(dim=1) # select the objectness score values, the squeeze to get rid of the extra dimension
 
             indices_to_keep = nms(boxes=boxes, scores=objectness_scores, iou_threshold=0.5)
-            actual_len = self.num_max_boxes
-            if len(indices_to_keep) < self.num_max_boxes:
+            actual_len = num_max_boxes
+            if len(indices_to_keep) <num_max_boxes:
                 actual_len = len(indices_to_keep)
 
 
-            kept_boxes = torch.zeros(self.num_max_boxes, 4)
+            kept_boxes = torch.zeros(num_max_boxes, 4)
             kept_boxes[:actual_len, :] = boxes[indices_to_keep[:actual_len]]
-            kept_objectness_scores = torch.zeros(self.num_max_boxes)
+            kept_objectness_scores = torch.zeros(num_max_boxes)
             kept_objectness_scores[:actual_len] = objectness_scores[indices_to_keep[:actual_len]]
             print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             for kept_box_idx in range(len(kept_boxes)):
@@ -177,7 +179,7 @@ def fit(
   train_dataloader: DataLoader,
   val_dataloader: DataLoader,
   device: str,
-  print_rate: int = 100
+  print_rate: int = 10
   ):
     # TODO: figure out accuacy
     #accuracy = torchmetrics.Accuracy(task='multiclass', average="weighted").to(model.device)

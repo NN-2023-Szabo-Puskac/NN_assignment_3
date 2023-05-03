@@ -84,10 +84,11 @@ class CardDetector(nn.Module):
         detection = self.detection_head(features)
         detection = detection.permute(0,2,3,1).contiguous()
         detection = detection.view(detection.shape[0], detection.shape[1], detection.shape[2], self.num_anchors_per_cell, 5)
+        #detection[:,:,:,:,0] = torch.sigmoid(detection[:,:,:,:,0])
         
         return detection
 
-    def predict(self, input, ground_truth=None):
+    def predict(self, input, keep_box_score_treshhold=0.6, ground_truth=None):
         self.eval()
 
         if (len(input.shape) == 3): # If we get a single image with shape (C x W x H) we need to add a dimension at the beginning so that the forward function can process it (only works on batched input)
@@ -128,8 +129,24 @@ class CardDetector(nn.Module):
             objectness_scores = image[:, :1].squeeze(dim=1) # select the objectness score values, the squeeze to get rid of the extra dimension
 
             indices_to_keep = nms(boxes=boxes, scores=objectness_scores, iou_threshold=0.5)
+            actual_len = self.num_max_boxes
+            if len(indices_to_keep) < self.num_max_boxes:
+                actual_len = len(indices_to_keep)
 
-            final_boxes[idx, :, :] = boxes[indices_to_keep[:self.num_max_boxes]]
+
+            kept_boxes = torch.zeros(self.num_max_boxes, 4)
+            kept_boxes[:actual_len, :] = boxes[indices_to_keep[:actual_len]]
+            kept_objectness_scores = torch.zeros(self.num_max_boxes)
+            kept_objectness_scores[:actual_len] = objectness_scores[indices_to_keep[:actual_len]]
+            print("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+            for kept_box_idx in range(len(kept_boxes)):
+                if kept_objectness_scores[kept_box_idx] < keep_box_score_treshhold:
+                    #print(f"score: {kept_objectness_scores[kept_box_idx]}")
+                    kept_boxes[kept_box_idx, :] = torch.Tensor([0.0, 0.0, 0.0, 0.0])
+
+            print(f"kept_objectness_scores: {kept_objectness_scores}")
+            print(f"kept_boxes: {kept_boxes}")
+            final_boxes[idx, :, :] = kept_boxes
 
         return final_boxes
         
@@ -171,8 +188,10 @@ def fit(
     
     # Iterate through epochs with tqdm
     for epoch in tqdm(range(num_epochs)):
-        print(f"Epoch: {epoch}\n")
-        train_loss = 0
+        print(f"\nEpoch: {epoch}")
+        train_total_loss = 0
+        train_objectness_loss = 0
+        train_localization_loss = 0 
         model.train()  # Set model to train
         
         for batch, (X, y) in enumerate(train_dataloader):
@@ -194,7 +213,9 @@ def fit(
 
             # total loss
             loss = box_loss_value + obj_loss_value
-            train_loss += loss.item()
+            train_total_loss += loss.item()
+            train_objectness_loss += obj_loss_value.item()
+            train_localization_loss += box_loss_value.item()
 
             loss.backward()
             optimizer.step()
@@ -204,11 +225,15 @@ def fit(
                 print(f"Looked at {batch} Batches\t---\t{len(train_dataloader.dataset)}/{len(train_dataloader.dataset)} Samples")
         
         # Divide the train_loss by the number of batches to get the average train_loss
-        avg_train_loss = train_loss / len(train_dataloader)
+        avg_train_total_loss = train_total_loss / len(train_dataloader)
+        avg_train_objectness_loss = train_objectness_loss / len(train_dataloader)
+        avg_train_localization_loss = train_localization_loss / len(train_dataloader)
 
         # Validation
         # Setup the Val Loss and Accuracy to accumulate over the batches in the val dataset
-        val_loss = 0
+        val_total_loss = 0
+        val_objectness_loss = 0
+        val_localization_loss = 0
         val_acc = 0
         ## Set model to evaluation mode and use torch.inference_mode to remove unnecessary training operations 
         model.eval()
@@ -221,17 +246,29 @@ def fit(
                 obj_loss_value = obj_loss(pred_obj, true_obj)
                 # total loss
                 loss = box_loss_value + obj_loss_value
-                val_loss += loss.item()
-
+                val_total_loss += loss.item()
+                val_objectness_loss += obj_loss_value.item()
+                val_localization_loss += box_loss_value.item()
                 #TODO: calculate accuracy
 
+
         ## Get the average Val Loss and Accuracy
-        avg_val_loss = val_loss / len(val_dataloader)
+        avg_val_total_loss = val_total_loss / len(val_dataloader)
+        avg_val_objectness_loss = val_objectness_loss / len(val_dataloader)
+        avg_val_localization_loss = val_localization_loss / len(val_dataloader)
         avg_val_acc = val_acc / len(val_dataloader)
 
-        print(f"Train loss: {avg_train_loss} | Val Loss: {avg_val_loss} | Val Accuracy: {avg_val_acc}")
+        print(f"Train Total Loss: {avg_train_total_loss}\nTrain Objectness Loss: {avg_train_objectness_loss}\nTrain Localization Loss: {avg_train_localization_loss}\nVal Total Loss: {avg_val_total_loss}\nVal Objectness Loss: {avg_val_objectness_loss}\nVal Localization Loss: {avg_val_localization_loss}\nVal Accuracy: {avg_val_acc}")
         if WANDB_LOGGING:
-            wandb.log({"Train Loss": avg_train_loss,"Val Loss": avg_val_loss, "Val Accuracy": avg_val_acc})
+            wandb.log({
+                "Train Total Loss": avg_train_total_loss,
+                "Train Objectness Loss": avg_train_objectness_loss,
+                "Train Localization Loss": avg_train_localization_loss,
+                "Val Total Loss": avg_val_total_loss,
+                "Val Objectness Loss": avg_val_objectness_loss,
+                "Val Localization Loss": avg_val_localization_loss,
+                "Val Accuracy": avg_val_acc
+            })
 
 
 if __name__ == "__main__":

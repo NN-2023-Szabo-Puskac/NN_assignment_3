@@ -10,7 +10,7 @@ import wandb
 
 from torch.utils.data import DataLoader
 
-from config import FREEZE_FEATURE_EXTRACTOR, WANDB_LOGGING
+from source_code.config import FREEZE_FEATURE_EXTRACTOR, WANDB_LOGGING
 
 FEATURES_IN_ANCHOR = 5
 

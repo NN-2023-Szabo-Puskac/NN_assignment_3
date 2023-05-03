@@ -39,7 +39,7 @@ class DetectionHeadV2(nn.Module):
 
         self.conv2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
         self.bn2 = nn.BatchNorm2d(512)
-        self.relu2 = nn.ReLU(inplace=True)
+        self.relu2 = nn.LeakyReLU(negative_slope=0.4)
 
         self.conv3 = nn.Conv2d(512, out_channels, kernel_size=3, stride=1, padding=1)
 
@@ -115,57 +115,60 @@ class CardDetector(nn.Module):
         self, input, keep_box_score_treshhold=0.51, num_max_boxes=5, ground_truth=None
     ):
         self.eval()
+        input = input.to(device=self.device)
 
-        if (
-            len(input.shape) == 3
-        ):  # If we get a single image with shape (C x W x H) we need to add a dimension at the beginning so that the forward function can process it (only works on batched input)
-            input = input.unsqueeze(0)
+        with torch.no_grad():
+            if (
+                len(input.shape) == 3
+            ):  # If we get a single image with shape (C x W x H) we need to add a dimension at the beginning so that the forward function can process it (only works on batched input)
+                input = input.unsqueeze(0)
 
-        if ground_truth != None:
-            detection = ground_truth
-        else:
-            detection = self.forward(input)
+            if ground_truth != None:
+                detection = ground_truth
+            else:
+                detection = self.forward(input)
 
-        detection = self.scale_prediction_to_input_shape(detection)
+            detection = self.scale_prediction_to_input_shape(detection)
 
-        # Apply sigmoid to the objectness scores
-        detection[:, :, :, :, 0] = torch.sigmoid(detection[:, :, :, :, 0])
+            # Apply sigmoid to the objectness scores
+            if ground_truth is None:
+                detection[:, :, :, :, 0] = torch.sigmoid(detection[:, :, :, :, 0])
 
-        pred_boxes = self.boxconvert_predicted_boxes(detection)
+            pred_boxes = self.boxconvert_predicted_boxes(detection)
 
-        final_boxes = torch.Tensor(input.shape[0], num_max_boxes, 4)
-        for idx, image in enumerate(pred_boxes):
-            boxes = image[:, 1:]  # select the coordinate values
-            objectness_scores = image[:, :1].squeeze(
-                dim=1
-            )  # select the objectness score values, the squeeze to get rid of the extra dimension
+            final_boxes = torch.Tensor(input.shape[0], num_max_boxes, 4)
+            for idx, image in enumerate(pred_boxes):
+                boxes = image[:, 1:]  # select the coordinate values
+                objectness_scores = image[:, :1].squeeze(
+                    dim=1
+                )  # select the objectness score values, the squeeze to get rid of the extra dimension
 
-            indices_to_keep = nms(
-                boxes=boxes, scores=objectness_scores, iou_threshold=0.5
-            )
-            actual_len = num_max_boxes
-            if len(indices_to_keep) < num_max_boxes:
-                actual_len = len(indices_to_keep)
+                indices_to_keep = nms(
+                    boxes=boxes, scores=objectness_scores, iou_threshold=0.5
+                )
+                actual_len = num_max_boxes
+                if len(indices_to_keep) < num_max_boxes:
+                    actual_len = len(indices_to_keep)
 
-            kept_boxes = torch.zeros(num_max_boxes, 4)
-            kept_boxes[:actual_len, :] = boxes[indices_to_keep[:actual_len]]
-            kept_objectness_scores = torch.zeros(num_max_boxes)
-            kept_objectness_scores[:actual_len] = objectness_scores[
-                indices_to_keep[:actual_len]
-            ]
-            print(
-                "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
-            )
-            for kept_box_idx in range(len(kept_boxes)):
-                if kept_objectness_scores[kept_box_idx] < keep_box_score_treshhold:
-                    # print(f"score: {kept_objectness_scores[kept_box_idx]}")
-                    kept_boxes[kept_box_idx, :] = torch.Tensor([0.0, 0.0, 0.0, 0.0])
+                kept_boxes = torch.zeros(num_max_boxes, 4)
+                kept_boxes[:actual_len, :] = boxes[indices_to_keep[:actual_len]]
+                kept_objectness_scores = torch.zeros(num_max_boxes)
+                kept_objectness_scores[:actual_len] = objectness_scores[
+                    indices_to_keep[:actual_len]
+                ]
+                print(
+                    "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+                )
+                for kept_box_idx in range(len(kept_boxes)):
+                    if kept_objectness_scores[kept_box_idx] < keep_box_score_treshhold:
+                        # print(f"score: {kept_objectness_scores[kept_box_idx]}")
+                        kept_boxes[kept_box_idx, :] = torch.Tensor([0.0, 0.0, 0.0, 0.0])
 
-            print(f"kept_objectness_scores: {kept_objectness_scores}")
-            print(f"kept_boxes: {kept_boxes}")
-            final_boxes[idx, :, :] = kept_boxes
+                print(f"kept_objectness_scores: {kept_objectness_scores}")
+                print(f"kept_boxes: {kept_boxes}")
+                final_boxes[idx, :, :] = kept_boxes
 
-        return final_boxes
+            return final_boxes
 
     def scale_prediction_to_input_shape(self, detection):
         anchor_box_scales = self.create_anchor_box_scales(
@@ -215,6 +218,7 @@ class CardDetector(nn.Module):
             detection.shape[1] * detection.shape[2] * self.num_anchors_per_cell,
             FEATURES_IN_ANCHOR,
         )
+
         for image in pred_boxes:
             image[:, 1:] = box_convert(image[:, 1:], in_fmt="cxcywh", out_fmt="xyxy")
         return pred_boxes

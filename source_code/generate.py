@@ -16,10 +16,10 @@ BORDER_SIZE = 100
 IMG_SHAPE = (222, 310)  # pngs with no background
 NO_OF_AUGS = 5
 SOURCE_DIR = "converted"
-OUTPUT_DIR = "augmented_test"
+OUTPUT_DIR = "augmented_22k"
 MIN_ROTATION = 0
 MAX_ROTATION = 45
-LOG_FILE_NAME = "./data/labels_test.csv"
+LOG_FILE_NAME = "./data/labels_22k.csv"
 IMG_COUNTS = [1]
 CHUNK_SIZE = 5000
 # IMG_COUNTS = prep_image_counts()
@@ -322,7 +322,7 @@ if __name__ == "__main__":
     start = datetime.now()
     convert_source_images(start_time=start)
     non_plane_cards = get_paths_to_non_plane_cards(start_time=start)
-    non_plane_cards = non_plane_cards[:2000]
+    non_plane_cards = non_plane_cards[:4400]
 
     # if not os.path.isdir(f"./data/{OUTPUT_DIR}"):
     os.makedirs(f"./data/{OUTPUT_DIR}", exist_ok=True)

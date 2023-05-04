@@ -33,15 +33,15 @@ class DetectionHeadV2(nn.Module):
         super().__init__()
 
         out_channels = num_anchors_per_cell * FEATURES_IN_ANCHOR
-        self.conv1 = nn.Conv2d(in_channels, 512, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(512)
+        self.conv1 = nn.Conv2d(in_channels, 256, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(256)
         self.relu1 = nn.LeakyReLU(negative_slope=0.4)
 
-        self.conv2 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(512)
+        self.conv2 = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
         self.relu2 = nn.LeakyReLU(negative_slope=0.4)
 
-        self.conv3 = nn.Conv2d(512, out_channels, kernel_size=3, stride=1, padding=1)
+        self.conv3 = nn.Conv2d(128, out_channels, kernel_size=3, stride=1, padding=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv1(x)
@@ -370,7 +370,6 @@ Val Accuracy:            {avg_val_acc}"""
                     "Val Total Loss": avg_val_total_loss,
                     "Val Objectness Loss": avg_val_objectness_loss,
                     "Val Localization Loss": avg_val_localization_loss,
-                    "Val Accuracy": avg_val_acc,
                 }
             )
     if save_path:

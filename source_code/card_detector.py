@@ -2,13 +2,16 @@ import torch
 import torch.nn as nn
 import torchvision.models as models
 from torch import Tensor
+from torch.utils.data import DataLoader
 
 from torchvision.ops import nms, box_convert
 import torchvision.transforms.functional as fn
 import torchmetrics
 import wandb
-
-from torch.utils.data import DataLoader
+from tqdm.auto import (
+    tqdm,
+)  # We use tqdm to display a simple progress bar, allowing us to observe the learning progression.
+from torchmetrics.detection import mean_ap
 
 from source_code.config import FREEZE_FEATURE_EXTRACTOR, WANDB_LOGGING
 
@@ -54,6 +57,32 @@ class DetectionHeadV2(nn.Module):
         return x
 
 
+class DetectionHeadV3(nn.Module):
+    def __init__(self, in_channels: int, num_anchors_per_cell: int):
+        super().__init__()
+
+        out_channels = num_anchors_per_cell * FEATURES_IN_ANCHOR
+        self.conv1 = nn.Conv2d(in_channels, 256, kernel_size=3, stride=2, padding=1)
+        self.bn1 = nn.BatchNorm2d(256)
+        self.relu1 = nn.LeakyReLU(negative_slope=0.4)
+
+        self.conv2 = nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        self.relu2 = nn.LeakyReLU(negative_slope=0.4)
+
+        self.conv3 = nn.Conv2d(128, out_channels, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu1(x)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = self.relu2(x)
+        x = self.conv3(x)
+        return x
+
+
 class CardDetector(nn.Module):
     def __init__(
         self,
@@ -61,6 +90,7 @@ class CardDetector(nn.Module):
         anchor_boxes: torch.Tensor,
         num_anchors_per_cell: int,
         num_max_boxes: int = 1,
+        head: str = "v2",
     ):
         super(CardDetector, self).__init__()
 
@@ -82,14 +112,19 @@ class CardDetector(nn.Module):
             for param in self.feature_extractor.parameters():
                 param.requires_grad = False
 
-        self.detection_head = DetectionHeadV2(
-            in_channels=512, num_anchors_per_cell=self.num_anchors_per_cell
-        )
+        if head == "v3":
+            self.detection_head = DetectionHeadV3(
+                in_channels=512, num_anchors_per_cell=self.num_anchors_per_cell
+            )
+        else:
+            self.detection_head = DetectionHeadV2(
+                in_channels=512, num_anchors_per_cell=self.num_anchors_per_cell
+            )
 
         dummy_image = torch.randn(1, 3, self.img_w, self.img_h)
-        features_shape = self.feature_extractor(dummy_image).shape
-        self.features_w = features_shape[-2]
-        self.features_h = features_shape[-1]
+        features_shape = self.forward(dummy_image).shape
+        self.features_w = features_shape[1]
+        self.features_h = features_shape[2]
         self.scale_w = self.img_w / self.features_w
         self.scale_h = self.img_h / self.features_h
 
@@ -139,6 +174,7 @@ class CardDetector(nn.Module):
             pred_boxes = self.boxconvert_predicted_boxes(detection)
 
             final_boxes = torch.Tensor(input.shape[0], num_max_boxes, 4)
+            actual_len = num_max_boxes
             for idx, image in enumerate(pred_boxes):
                 boxes = image[:, 1:]  # select the coordinate values
                 objectness_scores = image[:, :1].squeeze(
@@ -146,31 +182,36 @@ class CardDetector(nn.Module):
                 )  # select the objectness score values, the squeeze to get rid of the extra dimension
 
                 indices_to_keep = nms(
-                    boxes=boxes, scores=objectness_scores, iou_threshold=0.5
+                    boxes=boxes,
+                    scores=objectness_scores,
+                    iou_threshold=0,
                 )
-                actual_len = num_max_boxes
                 if len(indices_to_keep) < num_max_boxes:
                     actual_len = len(indices_to_keep)
 
                 kept_boxes = torch.zeros(num_max_boxes, 4)
                 kept_boxes[:actual_len, :] = boxes[indices_to_keep[:actual_len]]
-                kept_objectness_scores = torch.zeros(num_max_boxes)
+                kept_objectness_scores = torch.zeros(actual_len)
                 kept_objectness_scores[:actual_len] = objectness_scores[
                     indices_to_keep[:actual_len]
                 ]
-                print(
-                    "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
-                )
+
                 for kept_box_idx in range(len(kept_boxes)):
                     if kept_objectness_scores[kept_box_idx] < keep_box_score_treshhold:
                         # print(f"score: {kept_objectness_scores[kept_box_idx]}")
                         kept_boxes[kept_box_idx, :] = torch.Tensor([0.0, 0.0, 0.0, 0.0])
+                        actual_len -= 1
 
                 print(f"kept_objectness_scores: {kept_objectness_scores}")
                 print(f"kept_boxes: {kept_boxes}")
+                print(
+                    "+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+                )
                 final_boxes[idx, :, :] = kept_boxes
 
-            return final_boxes
+            return kept_objectness_scores[:actual_len], torch.Tensor(
+                final_boxes[:, :actual_len]
+            )
 
     def scale_prediction_to_input_shape(self, detection):
         anchor_box_scales = self.create_anchor_box_scales(
@@ -254,12 +295,6 @@ class CardDetector(nn.Module):
         return tensor
 
 
-from tqdm.auto import (
-    tqdm,
-)  # We use tqdm to display a simple progress bar, allowing us to observe the learning progression.
-from torchmetrics.detection import mean_ap
-
-
 def fit(
     model: nn.Module,
     num_epochs: int,
@@ -268,6 +303,7 @@ def fit(
     val_dataloader: DataLoader,
     device: str,
     print_rate: int = 10,
+    localization_weight: int = 1,
     save_path: str = None,
 ):
     # TODO: figure out accuacy
@@ -290,14 +326,23 @@ def fit(
 
             optimizer.zero_grad()
             outputs = model(X)
-            pred_boxes = outputs[..., 1:]
+            # pred_boxes = outputs[..., 1:]
+            pred_coords = outputs[..., 1:3]
+            pred_scales = outputs[..., 3:]
             pred_obj = outputs[..., 0]
 
-            true_boxes = y[..., 1:]
+            true_coords = y[..., 1:3]
+            true_scales = y[..., 3:]
+            # true_boxes = y[..., 1:]
             true_obj = y[..., 0]
 
             # localization loss
-            box_loss_value = box_loss(pred_boxes, true_boxes)
+            coords_loss_value = box_loss(pred_coords, true_coords)
+            scales_loss_value = box_loss(pred_scales, true_scales)
+            box_loss_value = (
+                coords_loss_value + scales_loss_value
+            ) * localization_weight
+            # box_loss_value = box_loss(pred_boxes, true_boxes) * localization_weight
 
             # objectness loss
             obj_loss_value = obj_loss(pred_obj, true_obj)
@@ -329,14 +374,30 @@ def fit(
         val_total_loss = 0
         val_objectness_loss = 0
         val_localization_loss = 0
-        val_acc = 0
         ## Set model to evaluation mode and use torch.inference_mode to remove unnecessary training operations
         model.eval()
         with torch.inference_mode():
             for X_val, y_val in val_dataloader:
                 X_val, y_val = X_val.to(device), y_val.to(device)
+
+                outputs = model(X_val)
+                # pred_boxes = outputs[..., 1:]
+                pred_coords = outputs[..., 1:3]
+                pred_scales = outputs[..., 3:]
+                pred_obj = outputs[..., 0]
+
+                true_coords = y_val[..., 1:3]
+                true_scales = y_val[..., 3:]
+                # true_boxes = y_val[..., 1:]
+                true_obj = y_val[..., 0]
+
                 # localization loss
-                box_loss_value = box_loss(pred_boxes, true_boxes)
+                coords_loss_value = box_loss(pred_coords, true_coords)
+                scales_loss_value = box_loss(pred_scales, true_scales)
+                box_loss_value = (
+                    coords_loss_value + scales_loss_value
+                ) * localization_weight
+                # box_loss_value = box_loss(pred_boxes, true_boxes) * localization_weight
                 # objectness loss
                 obj_loss_value = obj_loss(pred_obj, true_obj)
                 # total loss
@@ -350,7 +411,6 @@ def fit(
         avg_val_total_loss = val_total_loss / len(val_dataloader)
         avg_val_objectness_loss = val_objectness_loss / len(val_dataloader)
         avg_val_localization_loss = val_localization_loss / len(val_dataloader)
-        avg_val_acc = val_acc / len(val_dataloader)
 
         print(
             f"""Train Total Loss:    {avg_train_total_loss}
@@ -358,8 +418,7 @@ Train Objectness Loss:   {avg_train_objectness_loss}
 Train Localization Loss: {avg_train_localization_loss}
 Val Total Loss:          {avg_val_total_loss}
 Val Objectness Loss:     {avg_val_objectness_loss}
-Val Localization Loss:   {avg_val_localization_loss}
-Val Accuracy:            {avg_val_acc}"""
+Val Localization Loss:   {avg_val_localization_loss}"""
         )
         if WANDB_LOGGING:
             wandb.log(

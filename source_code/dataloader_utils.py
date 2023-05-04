@@ -104,10 +104,10 @@ class MTGCardsDataset(Dataset):
         cell_x_max = int(gt_cell["cell_x"] + gt_cell["cx"] + (gt_cell["w"] / 2))
         cell_y_max = int(gt_cell["cell_y"] + gt_cell["cy"] + (gt_cell["h"] / 2))
 
-        cell_count_x = cell_x_max - cell_x_min
-        stride_x = 0.2 / cell_count_x
-        cell_count_y = cell_y_max - cell_y_min
-        stride_y = 0.2 / cell_count_y
+        cell_count_x = cell_x_max - cell_x_min + 1
+        stride_x = 0.4 / cell_count_x
+        cell_count_y = cell_y_max - cell_y_min + 1
+        stride_y = 0.4 / cell_count_y
 
         tw = math.log(box_label[-2] / self.anchor_boxes[target_anchor_idx][0])
         th = math.log(box_label[-1] / self.anchor_boxes[target_anchor_idx][1])
